@@ -1,5 +1,7 @@
 #include <bits/stdc++.h>
-#include <cmath>
+#ifndef M_PI
+    #define M_PI 3.14159265358979323846
+#endif
 using namespace std;
 
 const double launchAngle = M_PI/4; //Radians
@@ -103,6 +105,7 @@ double volumetricFlowRate(double t){ //Standard Cubic Feet per Hour
 double airForce(double t){ //Newtons
     return inside(t)*barrelPressure(t)-atmPressure*M_PI*barrelRadius*barrelRadius;
 }
+
 int main(){
     double t = 0;
     while(t <= 3){
