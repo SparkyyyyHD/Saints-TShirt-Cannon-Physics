@@ -15,8 +15,27 @@ const double atmPressure = 101325; //Pascals
 const double airSpecificHeatRatio = 1.4;
 const double valveFlowCoeff = 10;
 const double initTemp = 300; //Kelvin
-const double dt = 0.0001; //Seconds
+const double dt = 0.01; //Seconds
 double weight = 9.8*sin(launchAngle)*shirtMass;
+
+class memoizer{
+    public:
+        void cache(double key, double value){
+            int scaledKey = static_cast<int>(round(key * 100000));
+            m[scaledKey] = value;
+        }
+        bool inMap(double key){
+            int scaledKey = static_cast<int>(round(key * 100000));
+            if(m.count(scaledKey)) return true;
+            return false;
+        }
+        double getVal(double key){
+            int scaledKey = static_cast<int>(round(key * 100000));
+            return m[scaledKey];
+        }
+    private:
+        map<int,double> m;
+};
 
 //Prototype functions
 bool inside(double t);
@@ -35,6 +54,23 @@ double tankDensity(double t);
 double volumetricFlowRate(double t);
 double airForce(double t);
 
+//Memoizer
+memoizer memAcceleration;
+memoizer memVelocity;
+memoizer memDisplacement;
+memoizer memBarrelVol;
+memoizer memMolesAirBarrel;
+memoizer memMolesAirTank;
+memoizer memTankPressure;
+memoizer memBarrelPressure;
+memoizer memBarrelTemp;
+memoizer memBarrelDensity;
+memoizer memTankDensity;
+memoizer memVolumetricFlowRate;
+memoizer memAirForce;
+
+
+
 //Inside barrel?
 bool inside(double t){ 
     if (0<=displacement(t) && displacement(t) < barrelLen) return 1;
@@ -42,68 +78,96 @@ bool inside(double t){
 }
 //Critical flow?
 bool critical(double t){
-    if (tankPressure(t)-2*barrelPressure(t)>=0) return 1;
+    if (0.528*tankPressure(t) > barrelPressure(t)) return 1;
     else return 0;
 }
 double acceleration(double t){ //Meters per second^2
-    return (inside(t)*airForce(t)-weight)/shirtMass;
+    if (memAcceleration.inMap(t)) return memAcceleration.getVal(t);
+    memAcceleration.cache(t,(inside(t)*airForce(t)-weight)/shirtMass);
+    return memAcceleration.getVal(t);
 }
 double velocity(double t){ //Meters per second
+    if (memVelocity.inMap(t)) return memVelocity.getVal(t);
     if(t <= 0) return 0;
     else{
-        return velocity(t-dt)+acceleration(t-dt)*dt;
+        memVelocity.cache(t,velocity(t-dt)+acceleration(t-dt)*dt);
+        return memVelocity.getVal(t);
     }
 }
 double displacement(double t){ //Meters
+    if (memDisplacement.inMap(t)) return memDisplacement.getVal(t);
     if(t<=0) return initPos;
     else{
-        return displacement(t-dt)+velocity(t-dt)*dt;
+        memDisplacement.cache(t,displacement(t-dt)+velocity(t-dt)*dt);
+        return memDisplacement.getVal(t);
     }
 }
 double barrelVol(double t){ //Meters^3
-    return inside(t)*max(M_PI*barrelRadius*barrelRadius*displacement(t),0.0);
+    if (memBarrelVol.inMap(t)) return memBarrelVol.getVal(t);
+    memBarrelVol.cache(t, M_PI*barrelRadius*barrelRadius*displacement(t));
+    return memBarrelVol.getVal(t);
 }
-double molesAirBarrel(double t){ //Moles
+double molesAirBarrel(double t){ //Moles n = PV/RT 8.314J/(mol*K)
+    if (memMolesAirBarrel.inMap(t)) return memMolesAirBarrel.getVal(t);
     if(t<=0){
-        return barrelVol(0)/(8310*initTemp);
+        return atmPressure*barrelVol(0)/(8.314*initTemp);
     }
     else{
-        return molesAirBarrel(t-dt)+0.000271*barrelDensity(t-dt)*volumetricFlowRate(t-dt)*dt;
+        memMolesAirBarrel.cache(t,molesAirBarrel(t-dt)+34.6*barrelDensity(t-dt)*volumetricFlowRate(t-dt)*dt); //rho*Q = m' 34.6mol/kg
+        return memMolesAirBarrel.getVal(t);
     }
 }
 double molesAirTank (double t){ //Moles
+    if (memMolesAirTank.inMap(t)) return memMolesAirTank.getVal(t);
     if(t<=0){
-        return initPressure*tankVol/(8310*initTemp*atmPressure);
+        return initPressure*tankVol/(8.314*initTemp);
     }
     else{
-        return molesAirTank(t-dt)-0.000271*tankDensity(t-dt)*volumetricFlowRate(t-dt)*dt;
+        memMolesAirTank.cache(t, molesAirTank(t-dt)-34.6*tankDensity(t-dt)*volumetricFlowRate(t-dt)*dt);
+        return memMolesAirTank.getVal(t);
     }
 }
-double tankPressure(double t){ //Pascals
-    return 8310*molesAirTank(t)*initTemp/(atmPressure*tankVol);
+double tankPressure(double t){ //Pascals P = nRT/V
+    if (memTankPressure.inMap(t)) return memTankPressure.getVal(t);
+    if (t<=0) return initPressure;
+    memTankPressure.cache(t, 8.314*molesAirTank(t)*initTemp/tankVol);
+    return memTankPressure.getVal(t);
 }
 double barrelPressure(double t){ //Pascals
-    return 8310*molesAirBarrel(t)*barrelTemp(t)/(atmPressure*barrelVol(t));
+    if (memBarrelPressure.inMap(t)) return memBarrelPressure.getVal(t);
+    if (t<=0) return atmPressure;
+    memBarrelPressure.cache(t, 8.314*molesAirBarrel(t)*barrelTemp(t)/barrelVol(t));
+    return memBarrelPressure.getVal(t);
 }
-double barrelTemp(double t){ //Kelvin
-    return initTemp*pow(barrelVol(0)/barrelVol(t), airSpecificHeatRatio-1);
+double barrelTemp(double t){ //Kelvin Adiabatic Expansion
+    if (memBarrelTemp.inMap(t)) return memBarrelTemp.getVal(t);
+    memBarrelTemp.cache(t, initTemp*pow(barrelVol(0)/barrelVol(t), airSpecificHeatRatio-1));
+    return memBarrelTemp.getVal(t);
 }
-double barrelDensity(double t){ //Kilograms per meter^3
-    return barrelPressure(t)/(287*barrelTemp(t));
+double barrelDensity(double t){ //Kilograms per meter^3 p/RT 287.05J/(kg*K)
+    if (memBarrelDensity.inMap(t)) return memBarrelDensity.getVal(t);
+    memBarrelDensity.cache(t,barrelPressure(t-dt)/(287.05*barrelTemp(t-dt)));
+    return memBarrelDensity.getVal(t);
 }
 double tankDensity(double t){ //Kilograms per meter^3
-    return tankPressure(t)/(287*initTemp);
+    if (memTankDensity.inMap(t)) return memTankDensity.getVal(t);
+    memTankDensity.cache(t,tankPressure(t-dt)/(287.05*initTemp));
+    return memTankDensity.getVal(t);
 }
-double volumetricFlowRate(double t){ //Standard Cubic Feet per Hour
-    if (critical(t)){
-        return 816*valveFlowCoeff*tankPressure(t)/sqrt(1.8*barrelTemp(t));
+double volumetricFlowRate(double t){ //meters^3 per second 0.0000078658 SCFH/(m^3/s) 1.8 R/K 0.000145038 PSI/Pa 0.0000000210100000296 PSI^2/Pa^2
+    if (memVolumetricFlowRate.inMap(t)) return memVolumetricFlowRate.getVal(t);
+    if (critical(t-dt)){
+        memVolumetricFlowRate.cache(t,0.0000078658*816*valveFlowCoeff*0.000145038*tankPressure(t-dt)/sqrt(1.8*barrelTemp(t-dt)));
     }
     else{
-        return 962*valveFlowCoeff*sqrt((tankPressure(t)*tankPressure(t)+barrelPressure(t)*barrelPressure(t))/(1.8*barrelTemp(t)));
+        memVolumetricFlowRate.cache(t,0.0000078658*962*valveFlowCoeff*sqrt((0.0000000210100000296*(tankPressure(t-dt)*tankPressure(t-dt)+barrelPressure(t-dt)*barrelPressure(t-dt)))/(1.8*barrelTemp(t-dt))));
     }
+    return memVolumetricFlowRate.getVal(t);
 }
-double airForce(double t){ //Newtons
-    return inside(t)*barrelPressure(t)-atmPressure*M_PI*barrelRadius*barrelRadius;
+double airForce(double t){ //Newtons a=F/m
+    if (memAirForce.inMap(t)) return memAirForce.getVal(t);
+    memAirForce.cache(t, inside(t-dt)*(barrelPressure(t-dt)-atmPressure)*M_PI*barrelRadius*barrelRadius);
+    return memAirForce.getVal(t);
 }
 
 int main(){
