@@ -15,22 +15,22 @@ const double atmPressure = 101325; //Pascals
 const double airSpecificHeatRatio = 1.4;
 const double valveFlowCoeff = 10;
 const double initTemp = 300; //Kelvin
-const double dt = 0.01; //Seconds
+const double dt = 0.00001; //Seconds
 double weight = 9.8*sin(launchAngle)*shirtMass;
 
 class memoizer{
     public:
         void cache(double key, double value){
-            int scaledKey = static_cast<int>(round(key * 100000));
+            int scaledKey = static_cast<int>(round(key * 1000000));
             m[scaledKey] = value;
         }
         bool inMap(double key){
-            int scaledKey = static_cast<int>(round(key * 100000));
+            int scaledKey = static_cast<int>(round(key * 1000000));
             if(m.count(scaledKey)) return true;
             return false;
         }
         double getVal(double key){
-            int scaledKey = static_cast<int>(round(key * 100000));
+            int scaledKey = static_cast<int>(round(key * 1000000));
             return m[scaledKey];
         }
     private:
@@ -78,7 +78,7 @@ bool inside(double t){
 }
 //Critical flow?
 bool critical(double t){
-    if (0.528*tankPressure(t) > barrelPressure(t)) return 1;
+    if (pow(2/(airSpecificHeatRatio+1),airSpecificHeatRatio/(airSpecificHeatRatio-1))*tankPressure(t) > barrelPressure(t)) return 1;
     else return 0;
 }
 double acceleration(double t){ //Meters per second^2
@@ -157,10 +157,10 @@ double tankDensity(double t){ //Kilograms per meter^3
 double volumetricFlowRate(double t){ //meters^3 per second 0.0000078658 SCFH/(m^3/s) 1.8 R/K 0.000145038 PSI/Pa 0.0000000210100000296 PSI^2/Pa^2
     if (memVolumetricFlowRate.inMap(t)) return memVolumetricFlowRate.getVal(t);
     if (critical(t-dt)){
-        memVolumetricFlowRate.cache(t,0.0000078658*816*valveFlowCoeff*0.000145038*tankPressure(t-dt)/sqrt(1.8*barrelTemp(t-dt)));
+        memVolumetricFlowRate.cache(t,0.0000078658*816*valveFlowCoeff*0.000145038*tankPressure(t-dt)/sqrt(1.8*barrelTemp(t-dt)*barrelDensity(t)/1.204));
     }
     else{
-        memVolumetricFlowRate.cache(t,0.0000078658*962*valveFlowCoeff*sqrt((0.0000000210100000296*(tankPressure(t-dt)*tankPressure(t-dt)+barrelPressure(t-dt)*barrelPressure(t-dt)))/(1.8*barrelTemp(t-dt))));
+        memVolumetricFlowRate.cache(t,0.0000078658*962*valveFlowCoeff*sqrt((0.0000000210100000296*(tankPressure(t-dt)*tankPressure(t-dt)+barrelPressure(t-dt)*barrelPressure(t-dt)))/(1.8*barrelTemp(t-dt)*barrelDensity(t)/1.204)));
     }
     return memVolumetricFlowRate.getVal(t);
 }
@@ -172,8 +172,8 @@ double airForce(double t){ //Newtons a=F/m
 
 int main(){
     double t = 0;
-    while(t <= 3){
+    while(inside(t)){
         cout << t << ' ' << velocity(t) << endl;
-        t+=0.01;
+        t+=0.001;
     }
 }
